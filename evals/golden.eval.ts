@@ -27,6 +27,8 @@ if (existsSync(".env.local")) process.loadEnvFile(".env.local");
 const MIN_PASS_RATE = Number(process.env.EVAL_MIN_PASS_RATE ?? 0.8);
 /** Pause between questions, to stay under the free tier's requests per minute. */
 const DELAY_MS = Number(process.env.EVAL_DELAY_MS ?? 5000);
+/** Pause before retrying a question that failed with an error. */
+const RETRY_DELAY_MS = Number(process.env.EVAL_RETRY_DELAY_MS ?? 30000);
 const ARCHITECTURES = (process.env.EVAL_ARCHITECTURES ?? "multi,single")
   .split(",")
   .map((a) => a.trim()) as Architecture[];
@@ -56,6 +58,8 @@ type CaseResult = {
   reply: string;
   failed: string[];
   traceId?: string;
+  /** The chat failed with an error (often a rate limit), not a wrong answer. */
+  errored: boolean;
 };
 
 const results: CaseResult[] = [];
@@ -144,6 +148,7 @@ async function runCase(
     reply: progress.reply,
     failed,
     traceId: progress.traceId,
+    errored: progress.status !== "done",
   };
 }
 
@@ -268,12 +273,21 @@ describe.skipIf(!isAiConfigured() && !process.env.CI)("golden set", () => {
     ).toBe(true);
   });
 
-  for (const architecture of ARCHITECTURES) {
-    it(
-      `${NAMES[architecture]}: runs and grades every golden question`,
-      async () => {
-        for (const testCase of CASES) {
-          const r = await runCase(architecture, testCase);
+  // Both designs answer each question back to back, so they meet the same
+  // conditions (like the model's rate limits) and the comparison is fair.
+  it(
+    "runs every golden question on each design and grades it",
+    async () => {
+      for (const testCase of CASES) {
+        for (const architecture of ARCHITECTURES) {
+          let r = await runCase(architecture, testCase);
+          if (r.errored) {
+            // An error (not a wrong answer) is usually a rate limit: wait and
+            // try once more.
+            console.log(`RETRY ${architecture}/${r.id} after an error`);
+            await sleep(RETRY_DELAY_MS);
+            r = await runCase(architecture, testCase);
+          }
           results.push(r);
           if (langfuse) scoreInLangfuse(langfuse, r);
           console.log(
@@ -281,16 +295,19 @@ describe.skipIf(!isAiConfigured() && !process.env.CI)("golden set", () => {
           );
           await sleep(DELAY_MS);
         }
-        const s = summarize(architecture);
-        if (architecture === "multi")
-          expect(
-            s.passRate,
-            `The multi agent passed ${s.passed}/${s.total}; it needs ${Math.round(MIN_PASS_RATE * 100)}%`,
-          ).toBeGreaterThanOrEqual(MIN_PASS_RATE);
-      },
-      30 * 60 * 1000,
-    );
-  }
+      }
+    },
+    45 * 60 * 1000,
+  );
+
+  it(`the multi agent passes at least ${Math.round(MIN_PASS_RATE * 100)}% of the golden set`, () => {
+    if (!ARCHITECTURES.includes("multi")) return;
+    const s = summarize("multi");
+    expect(
+      s.passRate,
+      `The multi agent passed ${s.passed}/${s.total}; it needs ${Math.round(MIN_PASS_RATE * 100)}%`,
+    ).toBeGreaterThanOrEqual(MIN_PASS_RATE);
+  });
 
   afterAll(async () => {
     const summaries = ARCHITECTURES.map(summarize);
