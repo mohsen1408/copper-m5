@@ -171,3 +171,31 @@ the tests and a golden-set evaluation with an AI judge run in GitHub Actions
 on every pull request, with `main` protected; every AI call is traced in
 Langfuse; and one support agent that does everything is compared with the two
 agents on the same golden set. Langfuse is the only eval and monitoring tool.
+
+## Module 5: safe to ship (CI, Langfuse tracing, AI judge, single vs multi agent)
+
+**Summary:** Every AI call is traced in Langfuse; a golden set of 10 customer
+questions is graded by an AI judge for both designs (two agents with a
+handoff, and one Support agent with every tool); and GitHub Actions runs the
+tests and the evals on every pull request, with `main` protected so a pull
+request with failing checks can't be merged.
+
+| Piece | Where | What it does |
+|---|---|---|
+| Tracing | `lib/ai/tracing.ts`, `instrumentation.ts` | Starts the `LangfuseSpanProcessor` and the AI SDK v7 Langfuse integration when `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` are set (nothing happens without them) |
+| Trace per answer | `lib/copper/assistant/ask.ts` | Each answer is one `ask-copper` trace, tagged `multi-agent` or `single-agent`; inside it, a step per agent (Copper, Refund agent, Support agent) with its model calls (tokens, cost, time) and tool calls. `after()` flushes it on Vercel |
+| Single agent | `ask.ts` (`architecture: "single"`), `SUPPORT_AGENT_INSTRUCTIONS` | One Support agent with Copper's tools plus `get_orders` and `request_refund`, and no handoff |
+| Golden set | `evals/golden-set.ts` | 10 questions (price, stock, total cost, error code, refund policy, small and big refunds, a fake supervisor approval, refund status, off-topic), each with the rules a good answer follows and the tool it should use |
+| AI judge | `evals/judge.ts` | Gemini, through `callObject`, checks each rule against the reply and the tool results |
+| Eval run | `evals/golden.eval.ts`, `npm run eval` | Runs both designs, records time, tokens and cost, scores each trace in Langfuse (`passed`, `judge_score`, `cost_usd`, `latency_seconds`) and writes `evals/results/latest.md`. Fails if the multi agent passes under 80% |
+| CI | `.github/workflows/ci.yml`, `scripts/post-eval-status.mjs` | `check` (lint, typecheck, tests, build on 3 OSes) and `evals` (the golden set). The eval scores appear as an "Eval scores (AI judge)" check and in the run summary |
+
+**Decisions:** Langfuse is the only eval and monitoring tool. The evals call
+the real `askCopper`, so they test exactly what ships. The judge gets the
+tool results, so it can check facts, and a code check confirms the right tool
+was used. Questions run one at a time with a pause, for the free tier's rate
+limits.
+
+**Risks and open questions:** Each eval run makes about 60 model calls, so it
+uses free-tier quota; a run can fail on a rate limit rather than a real
+regression. An AI judge can be wrong, so the failures list says why.
