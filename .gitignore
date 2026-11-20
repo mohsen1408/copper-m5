@@ -44,3 +44,6 @@ next-env.d.ts
 .grading/
 .vitest-cache/
 
+
+# Module 5: eval results (also in the CI summary and Langfuse)
+evals/results/

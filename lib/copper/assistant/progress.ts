@@ -2,13 +2,23 @@
 // summaries, each tool call (with what went in and what came out), and the
 // reply. The panel draws this as it changes.
 
-/** Who is answering: Copper, or the Refund agent after a handoff (Module 4). */
-export type Agent = "copper" | "refund";
+/**
+ * Who is answering: Copper, or the Refund agent after a handoff (Module 4), or
+ * the single Support agent that does both (Module 5's comparison).
+ */
+export type Agent = "copper" | "refund" | "support";
 
 export const AGENT_NAMES: Record<Agent, string> = {
   copper: "Copper",
   refund: "Refund agent",
+  support: "Support agent",
 };
+
+/**
+ * Module 5: two agents with a handoff (Copper and the Refund agent), or one
+ * Support agent with every tool. The evals run both and compare them.
+ */
+export type Architecture = "multi" | "single";
 
 export type ThinkingStep = { type: "thinking"; text: string; agent?: Agent };
 
@@ -35,6 +45,8 @@ export type Progress = {
   status: "working" | "done" | "error";
   /** Who wrote the reply. Copper unless set. */
   agent?: Agent;
+  /** The Langfuse trace for this answer, when tracing is on (Module 5). */
+  traceId?: string;
 };
 
 /** Every tool call in an answer, in order. */
@@ -71,4 +83,13 @@ export const AGENT_TOOLS: Record<Agent, string[]> = {
     "search_docs",
   ],
   refund: ["get_orders", "request_refund", "transfer_to_copper"],
+  support: [
+    "get_products",
+    "get_prices",
+    "calculate_cost",
+    "check_availability",
+    "search_docs",
+    "get_orders",
+    "request_refund",
+  ],
 };
